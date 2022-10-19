@@ -1,0 +1,175 @@
+name: "Terragrunt Provisioner"
+description: "Provision and maintain infrastructure"
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        description: "Name of the project to provision"
+        required: true
+        type: string
+      project_env:
+        description: "Environment to provision"
+        required: true
+        type: string
+      aws_region:
+        description: "AWS region to provision"
+        required: true
+        type: string
+      check:
+        description: "Run terragrunt validate"
+        required: false
+        type: boolean
+        default: false
+      plan:
+        description: "Run terragrunt plan"
+        required: false
+        type: boolean
+        default: true
+      apply:
+        description: "Apply changes"
+        required: true
+        type: boolean
+      destroy:
+        description: "Destroy changes"
+        required: true
+        type: boolean
+    secrets:
+      aws_access_key_id:
+        description: "AWS access key ID"
+        required: true
+      aws_secret_access_key:
+        description: "AWS secret access key"
+        required: true
+    
+env:
+  LIVE_REPO_ROOT: terraform-live
+  TERRAFORM_VERSION: 1.3.2
+  TERRAGRUNT_VERSION: 0.39.1
+
+jobs:
+  tg-provision:
+    runs-on: ubuntu-latest
+
+    outputs:
+      inst_ip: ${{ steps.apply.outputs.inst_ip }}
+
+    steps:
+      - name: Set AWS Variables
+        shell: bash
+        run: |
+          echo "LIVE_REPO_ROOT=terraform-live" >> $GITHUB_ENV
+      - name: Checkout
+        uses: actions/checkout@v2
+        
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Terraform version
+        shell: bash
+        run: terraform --version
+
+      # - name: Setup Terraform wrapper path
+      #   shell: bash
+      #   run: which terraform
+
+      - name: Checkout live deployments repo
+        uses: actions/checkout@v2  
+        with:
+          repository: nanoMFG/gsaweb-terraform-live
+          path: ${{ env.LIVE_REPO_ROOT }}
+
+      # - name: Terraform Format
+        #   id: fmt
+      #   run: terraform fmt -check
+      - name: Set Terraform Env Vars
+        shell: bash
+        run: |
+          echo "TF_VAR_project_name=${{ inputs.project_name }}" >> $GITHUB_ENV
+          echo "TF_VAR_project_env=${{ inputs.project_env }}" >> $GITHUB_ENV
+          echo "TF_VAR_aws_region=${{ inputs.aws_region }}" >> $GITHUB_ENV
+      - name: Setup Terragrunt ${{ env.TERRAGRUNT_VERSION}}
+        shell: bash
+        run: |
+          sudo wget -q -O /bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v0.39.1/terragrunt_linux_amd64"
+          sudo chmod +x /bin/terragrunt
+          terragrunt -v       
+          echo "WORKING_DIR=./${{ env.LIVE_REPO_ROOT }}/${{ inputs.project_name }}/${{ inputs.project_env }}" >> $GITHUB_ENV
+        # - name: Set Env tag
+      #   if: ${{ inputs.env_tag != "" }}
+      #   shell: bash
+      #   run: |
+      #     cd ${{ env.LIVE_REPO_ROOT }}/${{ inputs.project_name }}
+      #     cp -r ${{ inputs.project_env }} ${{ inputs.project_env }}/${{ inputs.env_tag }}
+      #     echo "WORKING_DIR=${{ env.LIVE_REPO_ROOT }}/${{ inputs.project_name }}/${{ inputs.project_env }}/${{ inputs.env_tag }}" >> $GITHUB_ENV
+
+      - name: Validate Terragrunt files
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        if: ${{ inputs.check }}
+        run: |
+          pwd
+          ls -lrt
+          terragrunt run-all validate --terragrunt-non-interactive
+      - name: Format Terragrunt files
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        if: ${{ inputs.check }}
+        run: |
+          pwd
+          ls -lrt
+          terragrunt run-all hclfmt --terragrunt-non-interactive
+      - name: Terragrunt Init
+        id: init
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terragrunt run-all init --terragrunt-non-interactive
+      - name: Terragrunt Plan
+        id: plan
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terragrunt run-all plan --terragrunt-non-interactive
+      - name: debug-output-plan
+        id: debug-output-plan
+        shell: bash
+        run: |
+          echo "plan outcome: ${{ steps.plan.outcome }}"
+      - name: TerraGrunt Apply
+        if: ${{ inputs.apply  && steps.plan.outcome == 'success' }}
+        id: apply
+        #continue-on-error: true
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terragrunt run-all apply --terragrunt-non-interactive | tee /tmp/apply.out
+          
+        #echo "inst_ip=$(terragrunt output -json | jq -r '.inst_ip.value')"
+        #echo "::set-output name=inst_ip::$(terragrunt output -json | jq -r '.inst_ip.value')"
+
+      - name: debug-output-apply
+        id: debug-output-apply
+        shell: bash
+        run: |
+          echo "apply outcome: ${{ steps.apply.outcome }}"
+          echo "web_instance_ip: ${{ steps.apply.web_instance_ip }}"
+      - name: TerraGrunt Destroy
+        if: ${{ inputs.destroy && ! inputs.apply }}
+        id: destroy
+        #continue-on-error: true
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terragrunt run-all destroy --terragrunt-non-interactive
