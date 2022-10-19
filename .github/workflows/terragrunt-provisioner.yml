@@ -159,11 +159,13 @@ jobs:
         #echo "::set-output name=inst_ip::$(terragrunt output -json | jq -r '.inst_ip.value')"
 
       - name: debug-output-apply
+        if: ${{ inputs.apply  && steps.plan.outcome == 'success' }}
         id: debug-output-apply
         shell: bash
         run: |
           echo "apply outcome: ${{ steps.apply.outcome }}"
           echo "web_instance_ip: ${{ steps.apply.web_instance_ip }}"
+          
       - name: TerraGrunt Destroy
         if: ${{ inputs.destroy && ! inputs.apply }}
         id: destroy
