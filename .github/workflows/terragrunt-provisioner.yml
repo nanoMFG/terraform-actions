@@ -83,7 +83,7 @@ jobs:
       #   run: which terraform
 
       - name: Checkout live deployments repo
-        uses: actions/checkout@v2  
+        uses: actions/checkout@v3
         with:
           repository: nanoMFG/gsaweb-terraform-live
           path: ${{ env.LIVE_REPO_ROOT }}
