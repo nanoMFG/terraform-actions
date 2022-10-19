@@ -1,5 +1,4 @@
 name: "Terragrunt Provisioner"
-description: "Provision and maintain infrastructure"
 
 on:
   workflow_call:
